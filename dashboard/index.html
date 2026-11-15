@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Launch Radar: pre-token protocols ranked by implied value</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<a class="skip" href="#board">Skip to the board</a>
+<header class="top">
+  <div class="rings" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+  <div class="sweep" aria-hidden="true"></div>
+  <div class="wrap head-in">
+    <p class="kicker">Token launch radar &middot; pre-token protocols</p>
+    <h1>What a token would be worth<br><em>before it exists</em></h1>
+    <p class="sub" id="lede"></p>
+    <div class="stamp" id="stamp"></div>
+    <div class="stats" id="stats"></div>
+  </div>
+</header>
+<main class="wrap" id="board" tabindex="-1">
+  <div class="toolbar">
+    <div class="tb-row">
+      <div class="search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+        <input id="q" type="search" placeholder="Search protocol, slug or chain" aria-label="Search the board">
+      </div>
+      <div class="seg" role="group" aria-label="Board scope">
+        <button id="sc-all" aria-pressed="true">All ranked</button>
+        <button id="sc-wl" aria-pressed="false">Watchlist</button>
+      </div>
+      <select id="cat" aria-label="Filter by sector"><option value="all">All sectors</option></select>
+      <select id="chain" aria-label="Filter by chain"><option value="all">All chains</option></select>
+      <select id="sort" aria-label="Sort the board">
+        <option value="implied">Sort: implied value</option>
+        <option value="tvl">Sort: TVL</option>
+        <option value="change">Sort: 7d change</option>
+        <option value="age">Sort: age with no token</option>
+        <option value="name">Sort: name</option>
+      </select>
+      <span class="count" id="count"></span>
+    </div>
+  </div>
+  <table class="board">
+    <thead><tr id="head"></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <p class="empty" id="empty" hidden>No protocol matches that filter. Clear the search or pick another sector.</p>
+  <footer>
+    <div class="cols">
+      <div>
+        <b id="fmodel"></b>
+        <ul id="fconst"></ul>
+      </div>
+      <div>
+        <b>How to read it</b>
+        <ul>
+          <li>Rank 1 is the board's most valuable protocol; implied value never rises as rank ascends.</li>
+          <li>A protocol records no token in DefiLlama's snapshot; that is not proof it has none.</li>
+          <li>Live-token protocols are set aside at the market's own value, never mixed into the ranking.</li>
+          <li>Every farm plan is derived from the protocol's own sector, chains, TVL and age.</li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+</main>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true" aria-label="Protocol detail"></aside>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
