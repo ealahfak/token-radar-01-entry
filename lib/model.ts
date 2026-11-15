@@ -42,8 +42,6 @@ export interface Snapshot {
 
 /** The model's constants, as the dashboard states them and the sandbox may change them. */
 export interface ModelConstants {
-  sector_multiple: Record<string, number>;
-  sector_default: number;
   growth_weight: number;
   growth_floor: number;
   growth_cap: number;
@@ -54,29 +52,6 @@ export interface ModelConstants {
 }
 
 export const MODEL: ModelConstants = {
-  sector_multiple: {
-    DEX: 0.35,
-    Lending: 0.3,
-    CDP: 0.3,
-    'Liquid Staking': 0.22,
-    'Liquid Restaking': 0.22,
-    'Restaked BTC': 0.2,
-    Bridge: 0.18,
-    'Canonical Bridge': 0.18,
-    Yield: 0.25,
-    'Yield Aggregator': 0.28,
-    'Leveraged Farming': 0.26,
-    Perps: 0.4,
-    Derivatives: 0.35,
-    RWA: 0.45,
-    'Prediction Market': 0.3,
-    Insurance: 0.25,
-    Stablecoin: 0.4,
-    Farm: 0.25,
-    Services: 0.2,
-    'Onchain Capital Allocator': 0.3,
-  },
-  sector_default: 0.26,
   growth_weight: 0.5,
   growth_floor: -50,
   growth_cap: 100,
@@ -87,10 +62,17 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-2';
+export const MODEL_VERSION = 'radar-3';
 
-/** How many pre-token protocols below the watchlist floor the early radar carries, by TVL. */
-export const EARLY_ROWS = 260;
+/** A comps multiple: dollars of market cap per dollar of TVL, read off the snapshot's own tokenized protocols. */
+export interface Comps {
+  global: { n: number; median: number };
+  by_category: Record<string, { n: number; median: number }>;
+  min_n: number;
+}
+
+/** A category needs this many tokenized protocols before its own median is trusted over the global one. */
+export const MIN_COMPS = 5;
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -119,7 +101,9 @@ export interface BoardRow {
   age_days: number | null;
   implied_value_usd: number;
   model: {
-    sector_multiple: number;
+    comps_multiple: number;
+    comps_n: number;
+    comps_source: 'category' | 'global';
     growth_pct: number;
     growth_multiplier: number;
     maturity_multiplier: number;
@@ -141,7 +125,9 @@ export interface RadarRow {
   listed_at: string | null;
   age_days: number | null;
   implied_value_usd: number;
-  sector_multiple: number;
+  comps_multiple: number;
+  comps_n: number;
+  comps_source: 'category' | 'global';
   growth_pct: number;
   growth_multiplier: number;
   maturity_multiplier: number;
@@ -166,6 +152,7 @@ export interface RadarData {
   floor_usd: number;
   model: ModelConstants;
   model_version: string;
+  comps: Comps;
   watchlist_size: number;
   board_size: number;
   early_size: number;
@@ -198,15 +185,63 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
   return Math.max(0, Math.floor((a - b) / DAY_MS));
 }
 
-/** The sector multiple a category carries: the snapshot's own category, else the default. */
-export function sectorMultiple(category: string | null, model: ModelConstants): number {
-  if (category === null) return model.sector_default;
-  const hit = model.sector_multiple[category];
-  return typeof hit === 'number' ? hit : model.sector_default;
+/** The middle value of a non-empty list of numbers. */
+function median(values: number[]): number {
+  const s = [...values].sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+}
+
+/**
+ * The comps multiple, fitted on the snapshot itself: every protocol that already trades gives a
+ * market-cap-per-TVL reading, the category median prices a pre-token peer, and the global median
+ * stands in when the category has fewer than `minN` readings. No hand-picked number anywhere.
+ */
+export function fitComps(protocols: SnapshotProtocol[], minN: number = MIN_COMPS): Comps {
+  const all: number[] = [];
+  const byCat = new Map<string, number[]>();
+  for (const p of protocols) {
+    const mcap = p.mcap_usd;
+    if (mcap === null || mcap <= 0 || p.tvl_usd <= 0) continue;
+    const ratio = mcap / p.tvl_usd;
+    all.push(ratio);
+    if (p.category === null) continue;
+    const list = byCat.get(p.category) ?? [];
+    list.push(ratio);
+    byCat.set(p.category, list);
+  }
+  if (all.length === 0) throw new SnapshotError('the snapshot carries no tokenized protocol to fit a comps multiple on');
+  const by_category: Record<string, { n: number; median: number }> = {};
+  for (const cat of [...byCat.keys()].sort()) {
+    const list = byCat.get(cat)!;
+    by_category[cat] = { n: list.length, median: round4(median(list)) };
+  }
+  return { global: { n: all.length, median: round4(median(all)) }, by_category, min_n: minN };
+}
+
+/** The multiple one protocol is priced at, and which table it came from. */
+export function compsMultiple(category: string | null, comps: Comps): { multiple: number; n: number; source: 'category' | 'global' } {
+  if (category !== null) {
+    const hit = comps.by_category[category];
+    if (hit !== undefined && hit.n >= comps.min_n) return { multiple: hit.median, n: hit.n, source: 'category' };
+  }
+  return { multiple: comps.global.median, n: comps.global.n, source: 'global' };
+}
+
+/** Why a fitted comps table is unusable, or null: the self-check the fit runs on itself. */
+export function compsIssue(comps: Comps): string | null {
+  const ok = (x: { n: number; median: number }): boolean => Number.isInteger(x.n) && x.n > 0 && Number.isFinite(x.median) && x.median > 0;
+  if (!ok(comps.global)) return `global comps is ${JSON.stringify(comps.global)}`;
+  const medians = Object.values(comps.by_category).map((c) => c.median);
+  for (const [cat, c] of Object.entries(comps.by_category)) if (!ok(c)) return `comps for ${cat} is ${JSON.stringify(c)}`;
+  if (medians.length > 0 && (comps.global.median < Math.min(...medians) || comps.global.median > Math.max(...medians))) {
+    return `the global median ${comps.global.median} sits outside its own categories' range`;
+  }
+  return null;
 }
 
 /** The three multipliers and the implied value one protocol gets under `model`. */
-export function impliedValue(protocol: SnapshotProtocol, asOf: string, model: ModelConstants): { implied: number; growthPct: number; growthMult: number; maturityMult: number; sector: number; age: number | null } {
+export function impliedValue(protocol: SnapshotProtocol, asOf: string, model: ModelConstants, comps: Comps): { implied: number; growthPct: number; growthMult: number; maturityMult: number; multiple: number; compsN: number; compsSource: 'category' | 'global'; age: number | null } {
   const age = ageDays(asOf, protocol.listed_at);
   const rawGrowth = finite(protocol.change_7d, 0);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, rawGrowth));
@@ -215,10 +250,10 @@ export function impliedValue(protocol: SnapshotProtocol, asOf: string, model: Mo
     age === null
       ? model.unknown_age_multiple
       : model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
-  const sector = sectorMultiple(protocol.category, model);
-  const base = protocol.tvl_usd * sector;
+  const priced = compsMultiple(protocol.category, comps);
+  const base = protocol.tvl_usd * priced.multiple;
   const implied = Math.max(1, Math.round(base * growthMult * maturityMult));
-  return { implied, growthPct, growthMult, maturityMult, sector, age };
+  return { implied, growthPct, growthMult, maturityMult, multiple: priced.multiple, compsN: priced.n, compsSource: priced.source, age };
 }
 
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
@@ -229,9 +264,22 @@ export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && p.gecko_id === null && p.symbol === null;
 }
 
-/** Whether a protocol is one the board may rank: pre-token, not an exchange, not a versioned pool. */
+/** Categories the snapshot's own watchlist rule treats as a wrapped or staked product of a token that trades. */
+const WRAPPED_CATEGORIES = new Set(['Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC', 'CEX']);
+
+/** The wrapped, staked and exchange-prefixed names the snapshot's own watchlist rule keeps off the list. */
+const WRAPPED_NAME = /\b(wrapped|staked|staking)\b/i;
+const EXCHANGE_PREFIX = /^(Binance|Coinbase|Bybit|Kraken|Bitget|OKX|Bitfinex|Gemini)\b/i;
+
+/**
+ * Whether a protocol is one the board may rank: it records no token, and it is not a wrapped, staked,
+ * bridged or exchange-branded product of a token that already trades (the house watchlist rule, RULES.txt).
+ */
 export function isRankable(p: SnapshotProtocol): boolean {
-  return isPreToken(p) && p.category !== 'CEX' && !VERSIONED.test(p.name);
+  if (!isPreToken(p)) return false;
+  if (p.category !== null && WRAPPED_CATEGORIES.has(p.category)) return false;
+  if (WRAPPED_NAME.test(p.name) || EXCHANGE_PREFIX.test(p.name) || VERSIONED.test(p.name)) return false;
+  return true;
 }
 
 /** The snapshot's protocol by slug. */
@@ -242,7 +290,7 @@ function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 
 /** The protocols the board ranks, strongest first, with ranks 1..n. */
-export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): BoardRow[] {
+export function buildBoard(snapshot: Snapshot, comps: Comps, model: ModelConstants = MODEL): BoardRow[] {
   const index = bySlug(snapshot.protocols);
   const chosen = new Map<string, SnapshotProtocol>();
   // The watchlist is the floor: every slug, even one the snapshot no longer carries.
@@ -250,15 +298,14 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     const p = index.get(slug);
     if (p !== undefined) chosen.set(slug, p);
   }
-  // The early radar: pre-token protocols below the watchlist floor, by TVL, capped.
+  // The early radar: every rankable pre-token protocol the watchlist does not already name.
   const early = snapshot.protocols
-    .filter((p) => !chosen.has(p.slug) && isRankable(p) && p.tvl_usd < snapshot.floor_usd)
-    .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0))
-    .slice(0, EARLY_ROWS);
+    .filter((p) => !chosen.has(p.slug) && isRankable(p))
+    .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
   for (const p of early) chosen.set(p.slug, p);
 
   const scored = [...chosen.values()].map((p) => {
-    const v = impliedValue(p, snapshot.as_of, model);
+    const v = impliedValue(p, snapshot.as_of, model, comps);
     return { p, ...v };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
@@ -278,7 +325,9 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     age_days: s.age,
     implied_value_usd: s.implied,
     model: {
-      sector_multiple: s.sector,
+      comps_multiple: s.multiple,
+      comps_n: s.compsN,
+      comps_source: s.compsSource,
       growth_pct: s.growthPct,
       growth_multiplier: round4(s.growthMult),
       maturity_multiplier: round4(s.maturityMult),
@@ -409,7 +458,9 @@ export function radarRow(row: BoardRow, watchlist: string[]): RadarRow {
     listed_at: row.listed_at,
     age_days: row.age_days,
     implied_value_usd: row.implied_value_usd,
-    sector_multiple: row.model.sector_multiple,
+    comps_multiple: row.model.comps_multiple,
+    comps_n: row.model.comps_n,
+    comps_source: row.model.comps_source,
     growth_pct: row.model.growth_pct,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
@@ -419,7 +470,10 @@ export function radarRow(row: BoardRow, watchlist: string[]): RadarRow {
 
 /** Everything the dashboard renders, from the snapshot. */
 export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
-  const board = buildBoard(snapshot, model);
+  const comps = fitComps(snapshot.protocols);
+  const bad = compsIssue(comps);
+  if (bad !== null) throw new SnapshotError(`the comps fit is unusable: ${bad}`);
+  const board = buildBoard(snapshot, comps, model);
   const live = liveRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
   const radar: RadarData = {
@@ -428,6 +482,7 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     floor_usd: snapshot.floor_usd,
     model,
     model_version: MODEL_VERSION,
+    comps,
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     early_size: early,

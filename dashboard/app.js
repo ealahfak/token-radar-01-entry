@@ -41,10 +41,11 @@
 
   // ---------------------------------------------------------------- header
   $('lede').innerHTML =
-    '<b>' + D.board_size + ' protocols that record no token</b>, ranked by what a token would be worth if ' +
-    'each kept the record DefiLlama holds for it: TVL times a sector multiple, adjusted for seven-day growth ' +
-    'and for how long the protocol has run without a token. Every watchlist protocol is on the board; ' +
-    D.early_size + ' rows below the watchlist floor are the early ones the radar exists to find.';
+    '<b>' + D.board_size + ' protocols that record no token</b>, ranked by what a token would be worth at the ' +
+    'price the market already pays its peers: TVL times a comps multiple fitted on the ' + D.comps.global.n +
+    ' protocols in this same snapshot that do trade, adjusted for seven-day growth and for how long the protocol ' +
+    'has run without a token. Every watchlist protocol is on the board; ' + D.early_size + ' more are the early ' +
+    'ones the radar exists to find.';
 
   $('stamp').innerHTML =
     '<span class="pill">snapshot <b>' + esc(D.as_of) + '</b></span>' +
@@ -187,7 +188,7 @@
     var steps = [];
     // The board's farm_steps live in board.json; data.js carries the plan rebuilt from the same record.
     steps = plan(r);
-    var base = r.tvl_usd * r.sector_multiple;
+    var base = r.tvl_usd * r.comps_multiple;
     $('drawer').innerHTML =
       '<div class="dh"><button class="close" aria-label="Close detail">&times;</button>' +
       '<h2>' + esc(r.name) + '</h2>' +
@@ -200,7 +201,7 @@
       '<div class="db">' +
         '<div class="sec"><h3>Implied value, line by line</h3><div class="math">' +
           line('TVL in the snapshot', exact(r.tvl_usd)) +
-          line('Sector multiple &middot; ' + esc(r.category || 'default'), '\u00d7 ' + num(r.sector_multiple)) +
+          line('Comps multiple &middot; ' + esc(r.category || 'unclassified') + (r.comps_source === 'category' ? ' (' + r.comps_n + ' tokenized peers)' : ' (global, ' + r.comps_n + ' protocols)'), '\u00d7 ' + num(r.comps_multiple, 4)) +
           line('Base, TVL &times; multiple', exact(base)) +
           line('Seven-day growth &middot; ' + (r.change_7d === null ? 'unreported' : (r.change_7d > 0 ? '+' : '') + r.change_7d.toFixed(1) + '%'),
             '\u00d7 ' + num(r.growth_multiplier, 4)) +
@@ -219,7 +220,10 @@
         '</ul></div>' +
         '<div class="sec"><h3>Why it sits here</h3><p class="note">' +
           esc(r.name) + ' ranks ' + r.rank + ' because its ' + usd(r.tvl_usd) + ' of TVL carries a ' +
-          num(r.sector_multiple) + ' sector multiple, its seven-day growth scales the base by ' + num(r.growth_multiplier) +
+          num(r.comps_multiple, 4) + ' comps multiple' + (r.comps_source === 'category'
+            ? ' — the median market-cap-to-TVL of ' + r.comps_n + ' tokenized ' + (r.category || 'peer') + ' protocols in this snapshot'
+            : ' — the global median of ' + r.comps_n + ' tokenized protocols, its own category being too thin to price') +
+          ', its seven-day growth scales the base by ' + num(r.growth_multiplier) +
           ' and its ' + (r.age_days === null ? 'unrecorded age' : r.age_days + ' days') + ' with no token scales it by ' +
           num(r.maturity_multiplier) + '. The same three factors score every protocol on the board; no name is special-cased.' +
         '</p></div>' +
@@ -282,11 +286,17 @@
     drawRows();
   }
 
-  $('fmodel').textContent = 'Model ' + D.model_version + ': implied = TVL x sector multiple x growth x maturity';
+  $('fmodel').textContent = 'Model ' + D.model_version + ': implied = TVL x comps multiple x growth x maturity';
+  var topComps = Object.keys(D.comps.by_category).map(function (k) {
+    return { k: k, c: D.comps.by_category[k] };
+  }).sort(function (a, b) { return b.c.n - a.c.n || (a.k < b.k ? -1 : 1); }).slice(0, 8);
   $('fconst').innerHTML =
-    '<li>sector multiple: ' + Object.keys(D.model.sector_multiple).map(function (k) {
-      return esc(k) + ' ' + D.model.sector_multiple[k];
-    }).join(', ') + ', else ' + D.model.sector_default + '</li>' +
+    '<li>comps multiple, fitted on this snapshot: global median ' + num(D.comps.global.median, 4) + ' from ' +
+      D.comps.global.n + ' tokenized protocols; a category uses its own median once it has ' + D.comps.min_n +
+      ' or more readings</li>' +
+    '<li>largest category samples: ' + topComps.map(function (x) {
+      return esc(x.k) + ' ' + num(x.c.median, 4) + ' (n=' + x.c.n + ')';
+    }).join(', ') + '</li>' +
     '<li>growth: clamp(change_7d, ' + D.model.growth_floor + '%, ' + D.model.growth_cap + '%) x ' + D.model.growth_weight + ' + 1</li>' +
     '<li>maturity: ' + D.model.maturity_floor + ' + min(age_days, ' + D.model.maturity_days + ') / ' + D.model.maturity_days +
       ' x ' + D.model.maturity_range + ', ' + D.model.unknown_age_multiple + ' when the age is unknown</li>' +

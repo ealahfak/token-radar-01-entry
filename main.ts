@@ -83,6 +83,7 @@ writeFileSync(
 
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
+    `token radar: comps fitted on ${radar.comps.global.n} tokenized protocols, global median ${radar.comps.global.median} mcap/TVL, ${Object.keys(radar.comps.by_category).length} categories priced\n` +
     `token radar: top row ${board[0]!.name} at $${board[0]!.implied_value_usd}, last row $${board[board.length - 1]!.implied_value_usd}\n` +
     `token radar: wrote board.json, data.js, dashboard/ (${readdirSync(join(here, 'dashboard')).length} files), screenshots/ (${shots.length}) and dossier.json to ${out}\n`,
 );

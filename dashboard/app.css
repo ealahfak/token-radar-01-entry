@@ -1,7 +1,7 @@
 :root{
   --ink:#070a0d; --panel:#0f151b; --panel2:#131b23; --panel3:#18222c;
   --line:#1f2b36; --line2:#2a3947;
-  --text:#e9eff5; --muted:#a1b4c4; --dim:#7a8b98;
+  --text:#eef4f9; --muted:#bccbd8; --dim:#94a5b3;
   --mint:#6ee7a8; --warn:#ffb86b; --cool:#7cc4ff; --hot:#ff8296;
   --sans:ui-sans-serif,-apple-system,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
